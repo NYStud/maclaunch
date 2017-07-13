@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+
+# Domains:
+# system: /System/Library/LaunchDaemons and /Library/LaunchDaemons
+# user
+# gui
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+function usage() {
+    echo "Usage: $0 <list|disable|enable> (item name|system)"
+    exit 1
+}
+
+function error() {
+    echo -e "${RED}ERROR:${N} ${1}${NC}"
+    exit 1
+}
+
+function join_by { local IFS="$1"; shift; echo "$*"; }
+
+function isDisabled() {
+	local domainType="$1"
+	local domainName="$2"
+
+	#launchctl stop "${domainType}/${domainName}"
+	#launchctl disable "${domainType}/${domainName}"
+	exit 1
+}
+
+function getServices() {
+	launchctl list | cut -f3 | tail -n +2 || error "Could not get services list."
+}
+
+function getFullName() {
+	local domainName="$1"
+
+	local userId=$(id -u $(whoami))
+
+	local types=(gui user login)
+	for type in ${types[@]}; do
+		launchctl print "${type}/${userId}/${domainName}" >/dev/null 2>&1
+		if [ $? -eq 0 ]; then
+			echo "${type}/${userId}/${domainName}"
+			return
+		fi
+	done
+
+	launchctl print "system/${domainName}" >/dev/null 2>&1
+	if [ $? -eq 0 ]; then
+		echo "${type}/${domainName}"
+		return
+	fi		
+
+	error "Could not determine domain type for ${domainName}"
+	exit 1
+}
+
+function getLoadItems() {
+	local input="$1"
+
+	local loadItems=()
+	if isDisabled "$content"; then
+		loadItems+=("${GREEN}disabled")
+    else
+        if echo "$content" | grep -q 'OnDemand'; then
+            loadItems+=("${GREEN}OnDemand")
+        fi
+        if echo "$content" | grep -q 'RunAtLoad'; then
+            loadItems+=("${RED}OnStartup")
+        fi
+        if echo "$content" | grep -q 'KeepAlive'; then
+            loadItems+=("${RED}Always")
+        fi
+        if echo "$content" | grep -q 'StartOnMount'; then
+            loadItems+=("${YELLOW}OnFilesystemMount")
+        fi
+        if echo "$content" | grep -q 'StartInterval'; then
+            loadItems+=("${RED}Periodically")
+        fi
+        if echo "$content" | grep -q "StartCalendarInterval"; then
+            loadItems+=("${YELLOW}OnCalendarInterval")
+        fi
+    fi
+
+    if [ ${#loadItems[@]} == 0 ]; then
+        echo "${YELLOW}Unknown"
+    else
+        echo "$(join_by ',' "${loadItems[@]}")"
+    fi
+}
+
+function listItems() {
+
+	local services=("$(getServices)")
+
+    for service in ${services[@]}; do
+
+    	local fullDomainName=$(getFullName "$service")
+    	local domainName=${fullDomainName##*/}
+    	local domainType=$(echo "$fullDomainName" | cut -d '/' -f 1)
+
+    	local content=$(launchctl print "$fullDomainName")
+        local loadItems=$(getLoadItems "$content")
+
+        echo -e "${BOLD}> ${domainName}${NC}"
+        echo    "  Type  : ${domainType}"
+        echo -e "  Launch: ${loadItems}${NC}"
+        echo    "  File  : $f"
+
+    done
+}
+
+function enableItem {
+    launchctl enable "gui/$(id -u $(whoami))/$1" || error "Could not enable ${STRONG}$1${NC}"
+}
+
+function disableItem {
+    launchctl disable "gui/$(id -u $(whoami))/$1" || error "Could not disable ${STRONG}$1${NC}"
+}
+
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    usage
+fi
+
+case "$1" in
+    "list")
+        if [ $# -ne 1 ]; then
+            if [ $# -ne 2 ] || [ "$2" != "system" ]; then
+                usage
+            fi
+        fi
+        listItems "$1" "$2"
+    ;;
+    "disable")
+        if [ $# -ne 2 ]; then
+            usage
+        fi
+        disableItem "$2"
+    ;;
+    "enable")
+        if [ $# -ne 2 ]; then
+            usage
+        fi
+        enableItem "$2"
+    ;;
+    *)
+        usage
+    ;;
+esac
